@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+beautifulsoup4
+requests
+aiohttp
+python-multipart
+lxml
+pydantic
+playwright
+playwright-stealth
