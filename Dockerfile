@@ -9,8 +9,9 @@ RUN npm run build
 # Runtime Stage for Python Backend + Playwright
 FROM mcr.microsoft.com/playwright/python:v1.40.0-jammy
 
-# Create a non-root user (standard for HF Spaces)
-RUN useradd -m -u 1000 user
+# Check if user 1000 exists, if not create it.
+# We use numeric ID 1000 for HF Spaces compatibility.
+RUN id -u 1000 &>/dev/null || useradd -m -u 1000 user
 
 WORKDIR /app
 
@@ -18,16 +19,16 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code with ownership
-COPY --chown=user:user backend ./backend
+# Copy backend code with numeric ownership (safe for any username)
+COPY --chown=1000:1000 backend ./backend
 
-# Copy built frontend from build stage with ownership
-COPY --chown=user:user --from=build /app/dist ./static
+# Copy built frontend with numeric ownership
+COPY --chown=1000:1000 --from=build /app/dist ./static
 
-# Switch to non-root user
-USER user
-ENV HOME=/home/user \
-    PATH=/home/user/.local/bin:$PATH
+# Switch to non-root user 1000
+USER 1000
+ENV HOME=/tmp \
+    PATH=/tmp/.local/bin:$PATH
 
 # Expose Hugging Face Spaces default port
 EXPOSE 7860
