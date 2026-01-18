@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import VideoPlayer from './VideoPlayer'
 
-const API_URL = 'http://127.0.0.1:8000'
+const API_URL = ''
 
 function App() {
   const [searchQuery, setSearchQuery] = useState('')
