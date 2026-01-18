@@ -375,6 +375,7 @@ async def extract_stream_url(imdb_id: str, source: str = "vidsrc.me"):
         
         # Anti-detection: Randomize to avoid fingerprinting
         import random
+        import os
         
         user_agents = [
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -383,156 +384,148 @@ async def extract_stream_url(imdb_id: str, source: str = "vidsrc.me"):
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
         ]
         
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    '--no-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process',
-                ]
-            )
+        # Retry logic for better reliability
+        max_retries = 2
+        for attempt in range(max_retries):
+            print(f"🔄 Extraction attempt {attempt + 1}/{max_retries}...")
             
-            # Fresh context with random fingerprint
-            context = await browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent=random.choice(user_agents),
-                locale='en-US',
-                timezone_id='America/New_York',
-                storage_state=None,
-                java_script_enabled=True,
-            )
-            
-            # Manual stealth - hide automation
-            await context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-                window.chrome = {runtime: {}};
-            """)
-            
-            page = await context.new_page()
-            
-            # Intercept ALL network requests AND responses
-            def handle_request(request):
-                url = request.url
-                resource_type = request.resource_type
-                
-                # Focus on media-related requests
-                if resource_type in ['xhr', 'fetch', 'media', 'other', 'manifest']:
-                    if is_valid_stream_url(url):
-                        print(f"🎯 Request: {url[:100]}...")
-                        captured_urls.append(url)
-            
-            def handle_response(response):
-                url = response.url
-                
-                # Check responses too
-                if is_valid_stream_url(url):
-                    print(f"🎯 Response: {url[:100]}...")
-                    captured_urls.append(url)
-            
-            # Listen to both events
-            page.on("request", handle_request)
-            page.on("response", handle_response)
-            
-            # Also intercept network routes for more aggressive capture
-            async def route_handler(route):
-                url = route.request.url
-                if is_valid_stream_url(url):
-                    print(f"🎯 Route: {url[:100]}...")
-                    captured_urls.append(url)
-                await route.continue_()
-            
-            # Intercept all routes
-            await page.route("**/*", route_handler)
+            captured_urls = []
+            har_path = f"/tmp/lonelymovie_requests_{imdb_id}_{attempt}.har"
             
             try:
-                print(f"📡 Loading: {embed_url}")
-                
-                # Navigate and wait for network activity
-                await page.goto(embed_url, wait_until='domcontentloaded', timeout=20000)
-                
-                # Random delay to appear human (2-4 seconds)
-                import random
-                await page.wait_for_timeout(random.randint(2000, 4000))
-                
-                print("🎬 Looking for play button...")
-                
-                # Try multiple strategies to click play
-                play_clicked = False
-                
-                # Strategy 1: Common play button selectors
-                play_selectors = [
-                    'button.vjs-big-play-button',  # Video.js
-                    '.vjs-big-play-button',
-                    'button[aria-label*="Play" i]',
-                    'button[aria-label*="play" i]',
-                    '.plyr__control--overlaid',  # Plyr
-                    'button.play-button',
-                    'button.play',
-                    '.play-overlay',
-                    '[class*="play"][class*="button"]',
-                    'video',  # Click video itself as fallback
-                ]
-                
-                for selector in play_selectors:
-                    try:
-                        element = await page.query_selector(selector)
-                        if element:
-                            print(f"  ✓ Found: {selector}")
-                            await element.click(timeout=2000)
-                            play_clicked = True
-                            break
-                    except:
-                        continue
-                
-                # Strategy 2: Click center of iframe (where play button usually is)
-                if not play_clicked:
-                    try:
-                        print("  → Clicking center of page...")
-                        await page.mouse.click(960, 540)  # Center of 1920x1080
-                        play_clicked = True
-                    except:
-                        pass
-                
-                if play_clicked:
-                    print("✅ Play button clicked!")
-                    # Wait for video to actually start playing
-                    await page.wait_for_timeout(8000)  # Give it time to buffer and start
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(
+                        headless=True,
+                        args=[
+                            '--no-sandbox',
+                            '--disable-dev-shm-usage',
+                            '--disable-blink-features=AutomationControlled',
+                            '--disable-web-security',
+                            '--disable-features=IsolateOrigins,site-per-process',
+                        ]
+                    )
                     
-                    # Check if video is playing by listening for more requests
-                    print("⏳ Waiting for stream requests...")
-                    await page.wait_for_timeout(5000)
-                else:
-                    print("⚠️ Could not click play, waiting anyway...")
-                    await page.wait_for_timeout(10000)
+                    # Fresh context with HAR recording enabled
+                    context = await browser.new_context(
+                        viewport={'width': 1920, 'height': 1080},
+                        user_agent=random.choice(user_agents),
+                        locale='en-US',
+                        timezone_id='America/New_York',
+                        storage_state=None,
+                        java_script_enabled=True,
+                        record_har_path=har_path,
+                        record_har_content='omit'
+                    )
+                    
+                    # Manual stealth - hide automation
+                    await context.add_init_script("""
+                        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                        Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                        Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                        window.chrome = {runtime: {}};
+                    """)
+                    
+                    page = await context.new_page()
+                    
+                    try:
+                        print(f"📡 Loading: {embed_url}")
+                        await page.goto(embed_url, wait_until='domcontentloaded', timeout=20000)
+                        
+                        # Random delay
+                        await page.wait_for_timeout(random.randint(2000, 4000))
+                        
+                        print("🎬 Looking for play button...")
+                        play_clicked = False
+                        
+                        play_selectors = [
+                            'button.vjs-big-play-button',
+                            '.vjs-big-play-button',
+                            'button[aria-label*="Play" i]',
+                            'button[aria-label*="play" i]',
+                            '.plyr__control--overlaid',
+                            'button.play-button',
+                            'button.play',
+                            '.play-overlay',
+                            '[class*="play"][class*="button"]',
+                            'video',
+                        ]
+                        
+                        for selector in play_selectors:
+                            try:
+                                element = await page.query_selector(selector)
+                                if element:
+                                    print(f"  ✓ Found: {selector}")
+                                    await element.click(timeout=2000)
+                                    play_clicked = True
+                                    break
+                            except:
+                                continue
+                        
+                        if not play_clicked:
+                            try:
+                                print("  → Clicking center of page...")
+                                await page.mouse.click(960, 540)
+                                play_clicked = True
+                            except:
+                                pass
+                        
+                        if play_clicked:
+                            print("✅ Play button clicked!")
+                            await page.wait_for_timeout(8000)
+                            print("⏳ Waiting for stream requests...")
+                            await page.wait_for_timeout(5000)
+                        else:
+                            print("⚠️ Could not click play, waiting anyway...")
+                            await page.wait_for_timeout(10000)
+                            
+                    except Exception as e:
+                        print(f"⚠️ Page error: {e}")
+                    finally:
+                        await context.close()
+                        await browser.close()
                 
+                # Parse HAR
+                if os.path.exists(har_path):
+                    try:
+                        import json
+                        with open(har_path, "r") as f:
+                            har_data = json.load(f)
+                        
+                        for entry in har_data.get("log", {}).get("entries", []):
+                            url = entry.get("request", {}).get("url", "")
+                            if is_valid_stream_url(url):
+                                captured_urls.append(url)
+                                
+                        # Cleanup HAR file
+                        os.remove(har_path)
+                    except Exception as e:
+                        print(f"⚠️ HAR parsing error: {e}")
+                
+                if captured_urls:
+                    print(f"✅ Successful capture on attempt {attempt + 1}!")
+                    break
+                else:
+                    print(f"❌ Failed attempt {attempt + 1}, retrying...")
+                    import asyncio
+                    await asyncio.sleep(2)
+                    
             except Exception as e:
-                print(f"⚠️ Page error: {e}")
-            finally:
-                await browser.close()
+                print(f"❌ Attempt {attempt + 1} failed with error: {e}")
+                import asyncio
+                await asyncio.sleep(2)
         
-        print(f"📊 Total URLs captured: {len(captured_urls)}")
-        
-        if not captured_urls:
-            return {
-                "stream_url": None,
-                "type": "iframe",
-                "message": "No streams detected"
-            }
-        
-        # Remove duplicates and rank
+        # Process results after retries
         unique_urls = list(set(captured_urls))
         ranked_urls = sorted(unique_urls, key=rank_stream_url, reverse=True)
         
-        print(f"🏆 Top stream scores:")
-        for url in ranked_urls[:3]:
-            print(f"  {rank_stream_url(url)}: {url[:80]}...")
-        
-        # Get best stream
+        if not ranked_urls:
+            return {
+                "stream_url": None,
+                "type": "iframe",
+                "message": "No streams detected after retries"
+            }
+            
+        print(f"🏆 Best stream: {ranked_urls[0][:100]}...")
         best_url = ranked_urls[0]
         stream_type = 'm3u8' if '.m3u8' in best_url.lower() else 'mp4'
         
@@ -540,7 +533,7 @@ async def extract_stream_url(imdb_id: str, source: str = "vidsrc.me"):
             "stream_url": best_url,
             "type": stream_type,
             "source": source,
-            "alternatives": ranked_urls[1:min(3, len(ranked_urls))]  # Return top 3
+            "alternatives": ranked_urls[1:min(3, len(ranked_urls))]
         }
     
     except Exception as e:
