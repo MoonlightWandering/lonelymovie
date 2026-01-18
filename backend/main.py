@@ -554,6 +554,26 @@ def get_embed_url_for_source(source: str, imdb_id: str) -> str:
     }
     return urls.get(source, urls['vidsrc.me'])
 
+# Serve React Frontend (Static Files)
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
+
+# Mount static files if directory exists (Docker/Production)
+static_dir = "static"
+if os.path.exists(static_dir):
+    app.mount("/assets", StaticFiles(directory=f"{static_dir}/assets"), name="assets")
+    
+    # Catch-all route for SPA (React Router)
+    @app.get("/{full_path:path}")
+    async def serve_react_app(full_path: str):
+        # Allow API calls to pass through
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API endpoint not found")
+            
+        # Serve index.html for all other routes
+        return FileResponse(f"{static_dir}/index.html")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
