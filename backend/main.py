@@ -50,17 +50,7 @@ def extract_title_and_year(title_text: str) -> tuple[str, Optional[str]]:
     
     return title, year
 
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {
-        "message": "LonelyMovie API",
-        "version": "1.0.0",
-        "endpoints": {
-            "search": "/api/search/{query}",
-            "health": "/health"
-        }
-    }
+
 
 @app.get("/health")
 async def health_check():
@@ -559,12 +549,31 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 
+# API Health Check
+@app.get("/api")
+async def api_root():
+    """API Root endpoint"""
+    return {
+        "message": "LonelyMovie API",
+        "version": "1.0.0",
+        "endpoints": {
+            "search": "/api/search/{query}",
+            "autocomplete": "/api/autocomplete/{query}",
+            "health": "/api"
+        }
+    }
+
 # Mount static files if directory exists (Docker/Production)
 static_dir = "static"
 if os.path.exists(static_dir):
     app.mount("/assets", StaticFiles(directory=f"{static_dir}/assets"), name="assets")
     
-    # Catch-all route for SPA (React Router)
+    # Explicit route for root to serve index.html
+    @app.get("/")
+    async def serve_root():
+        return FileResponse(f"{static_dir}/index.html")
+
+    # Catch-all route for SPA (React Router) - catch everything else
     @app.get("/{full_path:path}")
     async def serve_react_app(full_path: str):
         # Allow API calls to pass through
